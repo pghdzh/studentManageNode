@@ -7,12 +7,13 @@ const assignmentRouter = require("./routes/assignments");
 const app = express();
 const PORT = process.env.PORT || 3000;
 const cors = require("cors");
-
+const path = require("path");
 // 中间件
 app.use(express.json()); // 解析 JSON 请求体
 // 使用 cors 中间件，允许跨域请求
 app.use(cors());
-
+// 静态文件托管
+app.use('/uploads', express.static(path.join(__dirname, 'uploads')));
 // 路由
 app.use("/api/courses", courseRouter);
 app.use("/api/student", studentRouter);

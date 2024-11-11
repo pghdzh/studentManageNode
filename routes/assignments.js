@@ -1,9 +1,12 @@
 // routes/assignments.js
 const express = require("express");
-const { Assignment } = require("../models");
-const { Submission } = require("../models");
+
+const { Submission, Student, Assignment } = require("../models");
+
 const multer = require("multer");
 const router = express.Router();
+const path = require("path");
+const fs = require("fs");
 
 // 获取作业
 router.get("/", async (req, res) => {
@@ -17,7 +20,7 @@ router.get("/", async (req, res) => {
     // 创建查询条件
     const where = {};
     if (title) {
-      where.title = title; // 按学号查询
+      where.title = title;
     }
 
     // 执行查询
@@ -61,6 +64,7 @@ router.post("/", async (req, res) => {
 
 // 删除作业接口
 router.delete("/:id", async (req, res) => {
+  const transaction = await sequelize.transaction();
   try {
     const { id } = req.params;
 
@@ -70,10 +74,22 @@ router.delete("/:id", async (req, res) => {
       return res.status(404).json({ message: "作业未找到" });
     }
 
-    // 删除作业
-    await assignment.destroy();
-    res.status(200).json({ message: "作业删除成功", code: 200 });
+    // 删除作业对应的提交记录
+    await Submission.destroy({ where: { assignment_id: id } }, { transaction });
+
+    // 删除服务器上的作业文件夹
+    const folderPath = path.join("uploads", `${id}`);
+    if (fs.existsSync(folderPath)) {
+      fs.rmSync(folderPath, { recursive: true, force: true });
+    }
+
+    // 删除作业记录
+    await assignment.destroy({ transaction });
+
+    await transaction.commit();
+    res.status(200).json({ message: "作业及相关文件删除成功", code: 200 });
   } catch (error) {
+    await transaction.rollback();
     console.error("删除作业失败:", error);
     res.status(500).json({ message: "服务器错误", error: error.message });
   }
@@ -107,17 +123,48 @@ router.put("/:id", async (req, res) => {
 });
 
 //提交作业
+// 动态设置存储路径和文件名
 const storage = multer.diskStorage({
-  destination: function (req, file, cb) {
-    cb(null, "uploads/assignments/");
+  destination: async function (req, file, cb) {
+    const { assignmentId } = req.params;
+    try {
+      // 获取作业标题，用作文件夹名（若标题包含特殊字符，可进行处理）
+
+      const folderName = `${assignmentId}`;
+      const destPath = path.join("uploads", folderName);
+
+      // 检查路径是否存在，不存在则创建
+      if (!fs.existsSync(destPath)) {
+        fs.mkdirSync(destPath, { recursive: true });
+      }
+      cb(null, destPath);
+    } catch (error) {
+      console.error("路径创建失败:", error);
+      cb(error, null);
+    }
   },
-  filename: function (req, file, cb) {
-    cb(null, `${Date.now()}-${file.originalname}`);
+  filename: async function (req, file, cb) {
+    const { studentId } = req.body;
+    try {
+      // 查询学生信息，拼接学号和姓名作为文件名
+      const student = await Student.findByPk(studentId);
+      const fileName = student
+        ? `${student.student_number}_${student.full_name.replace(
+            /[^a-zA-Z0-9\u4e00-\u9fa5]/g,
+            "_"
+          )}${path.extname(file.originalname)}`
+        : file.originalname.replace(/[^a-zA-Z0-9\u4e00-\u9fa5]/g, "_");
+      cb(null, fileName);
+    } catch (error) {
+      console.error("文件命名失败:", error);
+      cb(error, null);
+    }
   },
 });
 
 const upload = multer({ storage });
 
+// 作业提交接口
 router.post(
   "/:assignmentId/submit",
   upload.single("file"),
@@ -126,13 +173,14 @@ router.post(
     const { studentId } = req.body;
 
     try {
-      const fileUrl = path.join("uploads", "assignments", req.file.filename);
+      const fileUrl = `http://localhost:3000/uploads/${assignmentId}/${req.file.filename}`;
 
+      // 保存提交记录
       const submission = await Submission.create({
         student_id: studentId,
         assignment_id: assignmentId,
-        file_url: fileUrl,
-        status: "已提交", // 提交状态
+        file_path: fileUrl,
+        status: "已提交",
       });
 
       res.status(200).json({ message: "作业提交成功", submission });
@@ -160,7 +208,7 @@ router.get("/:assignmentId/submissions", async (req, res) => {
 });
 
 //评分和反馈
-router.post("/:assignmentId/grade", async (req, res) => {
+router.post("/:assignmentId/feedback", async (req, res) => {
   const { assignmentId } = req.params;
   const { studentId, feedback } = req.body;
 
@@ -174,13 +222,60 @@ router.post("/:assignmentId/grade", async (req, res) => {
     }
 
     submission.feedback = feedback;
-    submission.status = "graded"; // 更新作业状态为已评分
+    submission.status = "已评分"; // 更新作业状态为已评分
 
     await submission.save();
 
-    res.status(200).json({ message: "评分成功", submission });
+    res.status(200).json({ message: "评分成功", submission, code: 200 });
   } catch (error) {
     console.error("评分失败:", error);
+    res.status(500).json({ message: "服务器错误", error: error.message });
+  }
+});
+
+// 查询作业所有提交记录
+router.get("/subitByAssignment/:assignmentId", async (req, res) => {
+  const { assignmentId } = req.params;
+  const { page = 1, limit = 10 } = req.query;
+
+  // 计算偏移量
+  const offset = (page - 1) * limit;
+  try {
+    const { count, rows: submissions } = await Submission.findAndCountAll({
+      where: { assignment_id: assignmentId },
+      offset: parseInt(offset, 10), // 偏移量
+      limit: parseInt(limit, 10), // 每页条数
+    });
+
+    // 获取所有学生ID
+    const studentIds = submissions.map((submission) => submission.student_id);
+
+    // 查找学生信息，注意区分ID字段
+    const students = await Student.findAll({
+      where: {
+        id: studentIds,
+      },
+    });
+
+    // 将学生信息合并到每个提交记录中
+    const submissionsWithStudents = submissions.map((submission) => {
+      const student = students.find((s) => s.id === submission.student_id);
+      return {
+        ...submission.toJSON(),
+        fullName: student.full_name,
+        student_number: student.student_number, // 将学生信息添加到作业提交记录中
+        studnetId: student.id,
+      };
+    });
+
+    res.status(200).json({
+      code: 200,
+      data: submissionsWithStudents,
+      total: count, // 总条数
+      currentPage: parseInt(page, 10), // 当前页码
+    });
+  } catch (error) {
+    console.error("获取学生作业记录失败:", error);
     res.status(500).json({ message: "服务器错误", error: error.message });
   }
 });
@@ -201,4 +296,47 @@ router.get("/students/:studentId/assignments", async (req, res) => {
   }
 });
 
+// 查询指定学生的所有作业（包含未提交和已提交状态）
+router.get("/student/:studentId/all-assignments", async (req, res) => {
+  const { studentId } = req.params;
+
+  try {
+    // 查询所有作业并通过左连接检查该学生是否有提交记录
+    const assignments = await Assignment.findAll({
+      attributes: ["id", "title", "due_date", "description"],
+      include: [
+        {
+          model: Submission,
+          required: false, // 使用 left join 保留所有作业
+          where: { student_id: studentId },
+          attributes: ["status", "feedback", "created_at"],
+        },
+      ],
+    });
+
+    // 格式化返回数据：区分已提交和未提交作业
+    const assignmentData = assignments.map((assignment) => {
+      const submission = assignment.Submissions[0]; // 获取提交信息
+      return {
+        id: assignment.id,
+        title: assignment.title,
+        description: assignment.description,
+        due_date: assignment.due_date,
+        status: submission ? submission.status : "未提交", // 判断是否有提交记录
+        feedback: submission ? submission.feedback : null,
+      };
+    });
+
+    res.status(200).json({
+      code: 200,
+      message: "查询成功",
+      data: assignmentData,
+    });
+  } catch (error) {
+    console.error("查询学生作业信息失败：", error);
+    res
+      .status(500)
+      .json({ code: 500, message: "服务器错误", error: error.message });
+  }
+});
 module.exports = router;

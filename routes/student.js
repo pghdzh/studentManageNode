@@ -2,6 +2,40 @@ const express = require("express");
 const router = express.Router();
 const Student = require("../models/Student");
 
+// 学生登录接口
+router.post("/login", async (req, res) => {
+  const { student_number, password } = req.body;
+
+  try {
+    // 根据学号查找学生
+    const student = await Student.findOne({ where: { student_number } });
+
+    // 学生不存在
+    if (!student) {
+      return res.status(404).json({ code: 404, message: "学号不存在" });
+    }
+
+    // 校验密码
+    if (student.password !== password) {
+      return res.status(401).json({ code: 401, message: "密码错误" });
+    }
+
+    // 登录成功，返回学生姓名
+    res.status(200).json({
+      code: 200,
+      message: "登录成功",
+      data: {
+        fullName: student.full_name, // 返回学生姓名
+        student_id: student.id,
+      },
+    });
+  } catch (error) {
+    console.error("登录失败：", error);
+    res
+      .status(500)
+      .json({ code: 500, message: "服务器错误", error: error.message });
+  }
+});
 
 // 获取所有学生（支持分页和按学号查询）
 router.get("/", async (req, res) => {
@@ -31,7 +65,7 @@ router.get("/", async (req, res) => {
       currentPage: parseInt(page, 10), // 当前页码
       totalPages: Math.ceil(count / limit), // 总页数
       students, // 学生数据
-      code:200
+      code: 200,
     });
   } catch (error) {
     console.error("Error occurred:", error); // 打印详细错误信息
