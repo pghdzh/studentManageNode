@@ -179,7 +179,7 @@ router.post(
     const { studentId } = req.body;
 
     try {
-      const fileUrl = `http://localhost:3000/uploads/${assignmentId}/${req.file.filename}`;
+      const fileUrl = `http://1.94.189.79:3000/uploads/${assignmentId}/${req.file.filename}`;
 
       // 保存提交记录
       const submission = await Submission.create({
