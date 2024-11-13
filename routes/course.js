@@ -54,7 +54,7 @@ router.put("/:id", async (req, res) => {
 });
 
 router.delete("/allCourses", async (req, res) => {
-  console.log("123123123123123123123")
+  console.log("123123123123123123123");
   try {
     // 删除 Course 表中的所有课程记录
     await Course.destroy({
@@ -84,7 +84,5 @@ router.delete("/:id", async (req, res) => {
     res.status(500).json({ message: "服务器错误", error: error.message });
   }
 });
-
-
 
 module.exports = router;

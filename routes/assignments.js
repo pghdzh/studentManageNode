@@ -1,7 +1,13 @@
 // routes/assignments.js
 const express = require("express");
 
-const { Submission, Student, Assignment } = require("../models");
+const {
+  Submission,
+  Student,
+  Assignment,
+  CourseStudent,
+  sequelize,
+} = require("../models");
 
 const multer = require("multer");
 const router = express.Router();
@@ -339,4 +345,77 @@ router.get("/student/:studentId/all-assignments", async (req, res) => {
       .json({ code: 500, message: "服务器错误", error: error.message });
   }
 });
+
+//下载作业下的全部文件
+
+router.get("/downloadAllAss/:assignmentId", async (req, res) => {
+  const { assignmentId } = req.params;
+  const folderPath = path.join("uploads", assignmentId);
+
+  if (!fs.existsSync(folderPath)) {
+    return res.status(404).json({ message: "文件夹未找到" });
+  }
+
+  try {
+    const files = fs.readdirSync(folderPath);
+    const fileUrls = files.map((file) => ({
+      fileName: file,
+      url: `/uploads/${assignmentId}/${file}`,
+    }));
+
+    res.status(200).json({ files: fileUrls });
+  } catch (error) {
+    console.error("读取文件失败:", error);
+    res.status(500).json({ message: "读取文件列表失败", error: error.message });
+  }
+});
+
+// 获取未提交作业的学生列表
+router.get("/:assignmentId/unsubmitted", async (req, res) => {
+  const { assignmentId } = req.params;
+
+  try {
+    // 获取作业所属的课程ID
+    const assignment = await Assignment.findByPk(assignmentId);
+    if (!assignment) {
+      return res.status(404).json({ message: "作业未找到" });
+    }
+
+    const courseId = assignment.course_id;
+
+    // 获取课程中的所有学生
+    const courseStudents = await CourseStudent.findAll({
+      where: { course_id: courseId },
+      include: [Student], // 不使用别名 as，直接引用模型
+    });
+
+    // 提取所有学生的ID
+    const courseStudentIds = courseStudents.map((cs) => cs.student_id);
+
+    // 获取已提交该作业的学生ID列表
+    const submittedStudentIds = await Submission.findAll({
+      where: { assignment_id: assignmentId },
+      attributes: ["student_id"],
+    }).then((submissions) =>
+      submissions.map((submission) => submission.student_id)
+    );
+
+    // 筛选出未提交作业的学生
+    const unsubmittedStudentIds = courseStudentIds.filter(
+      (id) => !submittedStudentIds.includes(id)
+    );
+
+    // 获取未提交学生的详细信息
+    const unsubmittedStudents = await Student.findAll({
+      where: { id: unsubmittedStudentIds },
+      attributes: ["id", "student_number", "full_name"],
+    });
+
+    res.status(200).json({ code: 200, unsubmittedStudents });
+  } catch (error) {
+    console.error("获取未提交学生失败:", error);
+    res.status(500).json({ message: "服务器错误", error: error.message });
+  }
+});
+
 module.exports = router;

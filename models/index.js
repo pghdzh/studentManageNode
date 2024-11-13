@@ -30,7 +30,8 @@ Student.belongsToMany(Course, {
   through: CourseStudent,
   foreignKey: "student_id",
 });
-
+CourseStudent.belongsTo(Student, { foreignKey: "student_id" });
+CourseStudent.belongsTo(Course, { foreignKey: "course_id" });
 // 导出所有模型
 module.exports = {
   sequelize,

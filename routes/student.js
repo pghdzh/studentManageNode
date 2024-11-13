@@ -90,6 +90,24 @@ router.put("/rePass/:id", async (req, res) => {
   }
 });
 
+// 修改密码
+router.put("/editPass/:id", async (req, res) => {
+  const { newPassword } = req.body;
+  try {
+    const student = await Student.findByPk(req.params.id);
+    if (!student) {
+      return res.status(404).json({ message: "学生未找到" });
+    }
+    student.password = newPassword;
+    await student.save();
+    res.status(200).json({
+      code: 200, // 标识请求成功
+    });
+  } catch (error) {
+    res.status(500).json({ message: "服务器错误", error: error.message });
+  }
+});
+
 // 修改姓名
 router.put("/reName/:id", async (req, res) => {
   const { full_name } = req.body;
